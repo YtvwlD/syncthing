@@ -53,12 +53,12 @@ import (
 )
 
 var (
-	Version     = "unknown-dev"
+	Version     = "v0.10.27"
 	BuildEnv    = "default"
-	BuildStamp  = "0"
+	BuildStamp  = "1426434172"
 	BuildDate   time.Time
-	BuildHost   = "unknown"
-	BuildUser   = "unknown"
+	BuildHost   = "Niklas-Netbook"
+	BuildUser   = "niklas"
 	IsRelease   bool
 	IsBeta      bool
 	LongVersion string
@@ -194,7 +194,7 @@ var (
 	generateDir       string
 	logFile           string
 	noRestart         = os.Getenv("STNORESTART") != ""
-	noUpgrade         = os.Getenv("STNOUPGRADE") != ""
+	noUpgrade         = "1"
 	guiAddress        = os.Getenv("STGUIADDRESS") // legacy
 	guiAuthentication = os.Getenv("STGUIAUTH")    // legacy
 	guiAPIKey         = os.Getenv("STGUIAPIKEY")  // legacy

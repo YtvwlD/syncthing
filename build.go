@@ -178,7 +178,7 @@ func test(pkg string) {
 
 func install(pkg string, tags []string) {
 	os.Setenv("GOBIN", "./bin")
-	args := []string{"install", "-v", "-ldflags", ldflags()}
+	args := []string{"install", "-v"}
 	if len(tags) > 0 {
 		args = append(args, "-tags", strings.Join(tags, ","))
 	}
@@ -197,7 +197,7 @@ func build(pkg string, tags []string) {
 	}
 
 	rmr(binary, binary+".md5")
-	args := []string{"build", "-ldflags", ldflags()}
+	args := []string{"build", "-gccgoflags", ldflags()}
 	if len(tags) > 0 {
 		args = append(args, "-tags", strings.Join(tags, ","))
 	}
@@ -334,12 +334,13 @@ func clean() {
 
 func ldflags() string {
 	var b bytes.Buffer
-	b.WriteString("-w")
-	b.WriteString(fmt.Sprintf(" -X main.Version %s", version))
-	b.WriteString(fmt.Sprintf(" -X main.BuildStamp %d", buildStamp()))
-	b.WriteString(fmt.Sprintf(" -X main.BuildUser %s", buildUser()))
-	b.WriteString(fmt.Sprintf(" -X main.BuildHost %s", buildHost()))
-	b.WriteString(fmt.Sprintf(" -X main.BuildEnv %s", buildEnvironment()))
+	//b.WriteString("-w")
+	//b.WriteString(fmt.Sprintf(" -X main.Version %s", version))
+	//b.WriteString(fmt.Sprintf(" -X main.BuildStamp %d", buildStamp()))
+	//b.WriteString(fmt.Sprintf(" -X main.BuildUser %s", buildUser()))
+	//b.WriteString(fmt.Sprintf(" -X main.BuildHost %s", buildHost()))
+	//b.WriteString(fmt.Sprintf(" -X main.BuildEnv %s", buildEnvironment()))
+	b.WriteString(" -O3 ")
 	return b.String()
 }
 
