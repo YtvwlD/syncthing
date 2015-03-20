@@ -194,7 +194,7 @@ var (
 	generateDir       string
 	logFile           string
 	noRestart         = os.Getenv("STNORESTART") != ""
-	noUpgrade         = "1"
+	noUpgrade         = true
 	guiAddress        = os.Getenv("STGUIADDRESS") // legacy
 	guiAuthentication = os.Getenv("STGUIAUTH")    // legacy
 	guiAPIKey         = os.Getenv("STGUIAPIKEY")  // legacy

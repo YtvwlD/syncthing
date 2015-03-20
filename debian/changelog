@@ -1,3 +1,27 @@
+syncthing (0.10.27-4) vivid; urgency=low
+
+  * Corrected my mistake in cmd/syncthing/main.go.
+
+ -- Niklas Sombert <niklas@ytvwld.de>  Fri, 20 Mar 2015 12:21:05 +0200
+
+syncthing (0.10.27-3) trusty; urgency=low
+
+  * Another build for Trusty.
+
+ -- Niklas Sombert <niklas@ytvwld.de>  Thu, 19 Mar 2015 18:31:20 +0200
+
+syncthing (0.10.27-2) utopic; urgency=low
+
+  * Another build for Utopic.
+
+ -- Niklas Sombert <niklas@ytvwld.de>  Thu, 19 Mar 2015 18:25:52 +0200
+
+syncthing (0.10.27-1) vivid; urgency=low
+
+  * Updated version to v0.10.27.
+
+ -- Niklas Sombert <niklas@ytvwld.de>  Thu, 19 Mar 2015 18:25:52 +0200
+
 syncthing (0.10.26-6) vivid; urgency=low
 
   * Another build for Vivid.
