@@ -2,18 +2,10 @@
 <!--
 // Copyright (C) 2014 The Syncthing Authors.
 //
-// This program is free software: you can redistribute it and/or modify it
-// under the terms of the GNU General Public License as published by the Free
-// Software Foundation, either version 3 of the License, or (at your option)
-// any later version.
-//
-// This program is distributed in the hope that it will be useful, but WITHOUT
-// ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-// FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
-// more details.
-//
-// You should have received a copy of the GNU General Public License along
-// with this program. If not, see <http://www.gnu.org/licenses/>.
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this file,
+// You can obtain one at http://mozilla.org/MPL/2.0/.
+
 -->
 <html lang="en" ng-app="syncthing" ng-controller="SyncthingController" class="ng-cloak">
 <head>
@@ -37,7 +29,7 @@
 
   <nav class="navbar navbar-top navbar-default" role="navigation">
     <div class="container">
-      <span class="navbar-brand"><img class="logo" src="assets/img/logo-text-64.png" height="32" width="117"/></span>
+      <span class="navbar-brand"><img class="logo" src="assets/img/logo-horizontal.svg" height="32" width="117"/></span>
       <p class="navbar-text hidden-xs">{{thisDeviceName()}}</p>
       <ul class="nav navbar-nav navbar-right">
         <li ng-if="upgradeInfo && upgradeInfo.newer">
@@ -251,7 +243,7 @@
                       <th><span class="glyphicon glyphicon-share-alt"></span>&emsp;<span translate>Shared With</span></th>
                       <td class="text-right">{{sharesFolder(folder)}}</td>
                     </tr>
-                    <tr ng-if="folderStats[folder.ID].LastFile">
+                    <tr ng-if="!folder.readOnly && folderStats[folder.ID].LastFile">
                       <th><span class="glyphicon glyphicon-transfer"></span>&emsp;<span translate>Last File Received</span></th>
                       <td class="text-right">
                         <span title="{{folderStats[folder.ID].LastFile.Filename}} @ {{folderStats[folder.ID].LastFile.At | date:'yyyy-MM-dd HH:mm'}}">
@@ -933,7 +925,7 @@
   <!-- About modal -->
 
   <modal id="about" large="yes" close="yes" status="info" title="{{'About' | translate}}">
-    <h1 class="text-center"><img alt="Syncthing" title="Syncthing" src="assets/img/logo-text-256.png" style="vertical-align: -16px" height="100" width="366"/><br/><small>{{version}}</small></h1>
+    <h1 class="text-center"><img alt="Syncthing" title="Syncthing" src="assets/img/logo-horizontal.svg" style="vertical-align: -16px" height="100" width="366"/><br/><small>{{version}}</small></h1>
     <hr/>
 
     <p translate>Copyright &copy; 2014 Jakob Borg and the following Contributors:</p>
@@ -965,6 +957,7 @@
           <li>James Patterson</li>
           <li>Jens Diemer</li>
           <li>Jochen Voss</li>
+          <li>Johan Vromans</li>
           <li>Kamada Ken'ichi</li>
           <li>Karol Różycki</li>
           <li>Lode Hoste</li>

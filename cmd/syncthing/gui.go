@@ -1,17 +1,8 @@
 // Copyright (C) 2014 The Syncthing Authors.
 //
-// This program is free software: you can redistribute it and/or modify it
-// under the terms of the GNU General Public License as published by the Free
-// Software Foundation, either version 3 of the License, or (at your option)
-// any later version.
-//
-// This program is distributed in the hope that it will be useful, but WITHOUT
-// ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-// FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
-// more details.
-//
-// You should have received a copy of the GNU General Public License along
-// with this program. If not, see <http://www.gnu.org/licenses/>.
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this file,
+// You can obtain one at http://mozilla.org/MPL/2.0/.
 
 package main
 
@@ -133,6 +124,7 @@ func startGUI(cfg config.GUIConfiguration, assetDir string, m *model.Model) erro
 	getRestMux.HandleFunc("/rest/tree", withModel(m, restGetTree))
 	getRestMux.HandleFunc("/rest/stats/device", withModel(m, restGetDeviceStats))
 	getRestMux.HandleFunc("/rest/stats/folder", withModel(m, restGetFolderStats))
+	getRestMux.HandleFunc("/rest/filestatus", withModel(m, restGetFileStatus))
 
 	// Debug endpoints, not for general use
 	getRestMux.HandleFunc("/rest/debug/peerCompletion", withModel(m, restGetPeerCompletion))
@@ -372,6 +364,27 @@ func restGetFolderStats(m *model.Model, w http.ResponseWriter, r *http.Request) 
 	var res = m.FolderStatistics()
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	json.NewEncoder(w).Encode(res)
+}
+
+func restGetFileStatus(m *model.Model, w http.ResponseWriter, r *http.Request) {
+	qs := r.URL.Query()
+	folder := qs.Get("folder")
+	file := qs.Get("file")
+	withBlocks := qs.Get("blocks") != ""
+	gf, _ := m.CurrentGlobalFile(folder, file)
+	lf, _ := m.CurrentFolderFile(folder, file)
+
+	if !withBlocks {
+		gf.Blocks = nil
+		lf.Blocks = nil
+	}
+
+	av := m.Availability(folder, file)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"global":       gf,
+		"local":        lf,
+		"availability": av,
+	})
 }
 
 func restGetConfig(w http.ResponseWriter, r *http.Request) {
@@ -815,6 +828,8 @@ func mimeTypeForFile(file string) string {
 		return "application/x-font-ttf"
 	case ".woff":
 		return "application/x-font-woff"
+	case ".svg":
+		return "image/svg+xml"
 	default:
 		return mime.TypeByExtension(ext)
 	}

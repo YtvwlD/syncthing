@@ -1,17 +1,8 @@
 // Copyright (C) 2014 The Syncthing Authors.
 //
-// This program is free software: you can redistribute it and/or modify it
-// under the terms of the GNU General Public License as published by the Free
-// Software Foundation, either version 3 of the License, or (at your option)
-// any later version.
-//
-// This program is distributed in the hope that it will be useful, but WITHOUT
-// ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-// FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
-// more details.
-//
-// You should have received a copy of the GNU General Public License along
-// with this program. If not, see <http://www.gnu.org/licenses/>.
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this file,
+// You can obtain one at http://mozilla.org/MPL/2.0/.
 
 // Package config implements reading and writing of the syncthing configuration file.
 package config
@@ -36,7 +27,7 @@ import (
 
 var l = logger.DefaultLogger
 
-const CurrentVersion = 9
+const CurrentVersion = 10
 
 type Configuration struct {
 	Version        int                   `xml:"version,attr"`
@@ -57,13 +48,14 @@ type FolderConfiguration struct {
 	Path            string                      `xml:"path,attr"`
 	Devices         []FolderDeviceConfiguration `xml:"device"`
 	ReadOnly        bool                        `xml:"ro,attr"`
-	RescanIntervalS int                         `xml:"rescanIntervalS,attr" default:"60"`
+	RescanIntervalS int                         `xml:"rescanIntervalS,attr"`
 	IgnorePerms     bool                        `xml:"ignorePerms,attr"`
+	AutoNormalize   bool                        `xml:"autoNormalize,attr"`
 	Versioning      VersioningConfiguration     `xml:"versioning"`
 	LenientMtimes   bool                        `xml:"lenientMtimes"`
-	Copiers         int                         `xml:"copiers" default:"1"`  // This defines how many files are handled concurrently.
-	Pullers         int                         `xml:"pullers" default:"16"` // Defines how many blocks are fetched at the same time, possibly between separate copier routines.
-	Hashers         int                         `xml:"hashers" default:"0"`  // Less than one sets the value to the number of cores. These are CPU bound due to hashing.
+	Copiers         int                         `xml:"copiers"` // This defines how many files are handled concurrently.
+	Pullers         int                         `xml:"pullers"` // Defines how many blocks are fetched at the same time, possibly between separate copier routines.
+	Hashers         int                         `xml:"hashers"` // Less than one sets the value to the number of cores. These are CPU bound due to hashing.
 
 	Invalid string `xml:"-"` // Set at runtime when there is an error, not saved
 
@@ -323,6 +315,9 @@ func (cfg *Configuration) prepare(myID protocol.DeviceID) {
 	if cfg.Version == 8 {
 		convertV8V9(cfg)
 	}
+	if cfg.Version == 9 {
+		convertV9V10(cfg)
+	}
 
 	// Hash old cleartext passwords
 	if len(cfg.GUI.Password) > 0 && cfg.GUI.Password[0] != '$' {
@@ -375,6 +370,11 @@ func (cfg *Configuration) prepare(myID protocol.DeviceID) {
 		}
 	}
 
+	// Very short reconnection intervals are annoying
+	if cfg.Options.ReconnectIntervalS < 5 {
+		cfg.Options.ReconnectIntervalS = 5
+	}
+
 	cfg.Options.ListenAddress = uniqueStrings(cfg.Options.ListenAddress)
 	cfg.Options.GlobalAnnServers = uniqueStrings(cfg.Options.GlobalAnnServers)
 
@@ -412,6 +412,14 @@ func ChangeRequiresRestart(from, to Configuration) bool {
 	}
 
 	return false
+}
+
+func convertV9V10(cfg *Configuration) {
+	// Enable auto normalization on existing folders.
+	for i := range cfg.Folders {
+		cfg.Folders[i].AutoNormalize = true
+	}
+	cfg.Version = 10
 }
 
 func convertV8V9(cfg *Configuration) {
