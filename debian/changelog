@@ -1,3 +1,10 @@
+syncthing (0.11.0-1) vivid; urgency=low
+
+  * Updated version to v0.11.0.
+    WARNING: This version is not compatible to v0.10.*!
+
+ -- Niklas Sombert <niklas@ytvwld.de>  Sun, 26 Apr 2015 15:07:37 +0200
+
 syncthing (0.10.30-3) trusty; urgency=low
 
   * Another build for Trusty.

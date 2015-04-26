@@ -80,6 +80,7 @@ func (w *Wrapper) Serve() {
 		w.sMut.Lock()
 		subs := w.subs
 		w.sMut.Unlock()
+
 		for _, h := range subs {
 			h.Changed(cfg)
 		}
@@ -113,7 +114,7 @@ func (w *Wrapper) Replace(cfg Configuration) {
 	w.cfg = cfg
 	w.deviceMap = nil
 	w.folderMap = nil
-	w.replaces <- cfg
+	w.replaces <- cfg.Copy()
 }
 
 // Devices returns a map of devices. Device structures should not be changed,
@@ -141,13 +142,13 @@ func (w *Wrapper) SetDevice(dev DeviceConfiguration) {
 	for i := range w.cfg.Devices {
 		if w.cfg.Devices[i].DeviceID == dev.DeviceID {
 			w.cfg.Devices[i] = dev
-			w.replaces <- w.cfg
+			w.replaces <- w.cfg.Copy()
 			return
 		}
 	}
 
 	w.cfg.Devices = append(w.cfg.Devices, dev)
-	w.replaces <- w.cfg
+	w.replaces <- w.cfg.Copy()
 }
 
 // Devices returns a map of folders. Folder structures should not be changed,
@@ -158,12 +159,6 @@ func (w *Wrapper) Folders() map[string]FolderConfiguration {
 	if w.folderMap == nil {
 		w.folderMap = make(map[string]FolderConfiguration, len(w.cfg.Folders))
 		for _, fld := range w.cfg.Folders {
-			path, err := osutil.ExpandTilde(fld.Path)
-			if err != nil {
-				l.Warnln("home:", err)
-				continue
-			}
-			fld.Path = path
 			w.folderMap[fld.ID] = fld
 		}
 	}
@@ -181,13 +176,13 @@ func (w *Wrapper) SetFolder(fld FolderConfiguration) {
 	for i := range w.cfg.Folders {
 		if w.cfg.Folders[i].ID == fld.ID {
 			w.cfg.Folders[i] = fld
-			w.replaces <- w.cfg
+			w.replaces <- w.cfg.Copy()
 			return
 		}
 	}
 
 	w.cfg.Folders = append(w.cfg.Folders, fld)
-	w.replaces <- w.cfg
+	w.replaces <- w.cfg.Copy()
 }
 
 // Options returns the current options configuration object.
@@ -202,7 +197,7 @@ func (w *Wrapper) SetOptions(opts OptionsConfiguration) {
 	w.mut.Lock()
 	defer w.mut.Unlock()
 	w.cfg.Options = opts
-	w.replaces <- w.cfg
+	w.replaces <- w.cfg.Copy()
 }
 
 // GUI returns the current GUI configuration object.
@@ -217,23 +212,7 @@ func (w *Wrapper) SetGUI(gui GUIConfiguration) {
 	w.mut.Lock()
 	defer w.mut.Unlock()
 	w.cfg.GUI = gui
-	w.replaces <- w.cfg
-}
-
-// InvalidateFolder sets the invalid marker on the given folder.
-func (w *Wrapper) InvalidateFolder(id string, err string) {
-	w.mut.Lock()
-	defer w.mut.Unlock()
-
-	w.folderMap = nil
-
-	for i := range w.cfg.Folders {
-		if w.cfg.Folders[i].ID == id {
-			w.cfg.Folders[i].Invalid = err
-			w.replaces <- w.cfg
-			return
-		}
-	}
+	w.replaces <- w.cfg.Copy()
 }
 
 // Returns whether or not connection attempts from the given device should be

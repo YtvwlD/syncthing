@@ -32,13 +32,13 @@ func TestRestartSenderAndReceiverDuringTransfer(t *testing.T) {
 
 func testRestartDuringTransfer(t *testing.T, restartSender, restartReceiver bool, senderDelay, receiverDelay time.Duration) {
 	log.Println("Cleaning...")
-	err := removeAll("s1", "s2", "h1/index", "h2/index")
+	err := removeAll("s1", "s2", "h1/index*", "h2/index*")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	log.Println("Generating files...")
-	err = generateFiles("s1", 1000, 22, "../LICENSE")
+	err = generateFiles("s1", 250, 20, "../LICENSE")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func testRestartDuringTransfer(t *testing.T, restartSender, restartReceiver bool
 			prevComp = curComp
 		}
 
-		time.Sleep(250 * time.Millisecond)
+		time.Sleep(time.Second)
 	}
 
 	err = sender.stop()

@@ -20,12 +20,13 @@ import (
 // updated along the way.
 type sharedPullerState struct {
 	// Immutable, does not require locking
-	file        protocol.FileInfo
+	file        protocol.FileInfo // The new file (desired end state)
 	folder      string
 	tempName    string
 	realName    string
 	reused      int // Number of blocks reused from temporary file
 	ignorePerms bool
+	version     protocol.Vector // The current (old) version
 
 	// Mutable, must be locked for access
 	err        error      // The first error we hit
@@ -40,14 +41,14 @@ type sharedPullerState struct {
 
 // A momentary state representing the progress of the puller
 type pullerProgress struct {
-	Total               int
-	Reused              int
-	CopiedFromOrigin    int
-	CopiedFromElsewhere int
-	Pulled              int
-	Pulling             int
-	BytesDone           int64
-	BytesTotal          int64
+	Total               int   `json:"total"`
+	Reused              int   `json:"reused"`
+	CopiedFromOrigin    int   `json:"copiedFromOrigin"`
+	CopiedFromElsewhere int   `json:"copiedFromElsewhere"`
+	Pulled              int   `json:"pulled"`
+	Pulling             int   `json:"pulling"`
+	BytesDone           int64 `json:"bytesDone"`
+	BytesTotal          int64 `json:"bytesTotal"`
 }
 
 // A lockedWriterAt synchronizes WriteAt calls with an external mutex.

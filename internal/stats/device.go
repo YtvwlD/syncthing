@@ -15,7 +15,7 @@ import (
 )
 
 type DeviceStatistics struct {
-	LastSeen time.Time
+	LastSeen time.Time `json:"lastSeen"`
 }
 
 type DeviceStatisticsReference struct {
