@@ -43,9 +43,9 @@ import (
 )
 
 var (
-	Version     = "v0.10.30"
+	Version     = "v0.11.0"
 	BuildEnv    = "default"
-	BuildStamp  = "1427629131"
+	BuildStamp  = "1430054108"
 	BuildDate   time.Time
 	BuildHost   = "Niklas-Netbook"
 	BuildUser   = "niklas"
