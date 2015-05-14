@@ -1,3 +1,17 @@
+syncthing (0.11.0-3) trusty; urgency=low
+
+  * Updated version to v0.11.0.
+    WARNING: This version is not compatible to v0.10.*!
+
+ -- Niklas Sombert <niklas@ytvwld.de>  Sun, 26 Apr 2015 15:49:50 +0200
+
+syncthing (0.11.0-2) utopic; urgency=low
+
+  * Updated version to v0.11.0.
+    WARNING: This version is not compatible to v0.10.*!
+
+ -- Niklas Sombert <niklas@ytvwld.de>  Sun, 26 Apr 2015 15:37:43 +0200
+
 syncthing (0.11.0-1) vivid; urgency=low
 
   * Updated version to v0.11.0.
