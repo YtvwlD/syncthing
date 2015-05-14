@@ -10,11 +10,11 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	"sync"
 
 	"github.com/syncthing/protocol"
 	"github.com/syncthing/syncthing/internal/events"
 	"github.com/syncthing/syncthing/internal/osutil"
+	"github.com/syncthing/syncthing/internal/sync"
 )
 
 // An interface to handle configuration changes, and a wrapper type á la
@@ -49,7 +49,12 @@ type Wrapper struct {
 // Wrap wraps an existing Configuration structure and ties it to a file on
 // disk.
 func Wrap(path string, cfg Configuration) *Wrapper {
-	w := &Wrapper{cfg: cfg, path: path}
+	w := &Wrapper{
+		cfg:  cfg,
+		path: path,
+		mut:  sync.NewMutex(),
+		sMut: sync.NewMutex(),
+	}
 	w.replaces = make(chan Configuration)
 	go w.Serve()
 	return w
@@ -151,7 +156,7 @@ func (w *Wrapper) SetDevice(dev DeviceConfiguration) {
 	w.replaces <- w.cfg.Copy()
 }
 
-// Devices returns a map of folders. Folder structures should not be changed,
+// Folders returns a map of folders. Folder structures should not be changed,
 // other than for the purpose of updating via SetFolder().
 func (w *Wrapper) Folders() map[string]FolderConfiguration {
 	w.mut.Lock()
@@ -215,8 +220,8 @@ func (w *Wrapper) SetGUI(gui GUIConfiguration) {
 	w.replaces <- w.cfg.Copy()
 }
 
-// Returns whether or not connection attempts from the given device should be
-// silently ignored.
+// IgnoredDevice returns whether or not connection attempts from the given
+// device should be silently ignored.
 func (w *Wrapper) IgnoredDevice(id protocol.DeviceID) bool {
 	w.mut.Lock()
 	defer w.mut.Unlock()

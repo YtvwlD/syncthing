@@ -13,7 +13,6 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"github.com/syncthing/protocol"
@@ -24,6 +23,7 @@ import (
 	"github.com/syncthing/syncthing/internal/osutil"
 	"github.com/syncthing/syncthing/internal/scanner"
 	"github.com/syncthing/syncthing/internal/symlinks"
+	"github.com/syncthing/syncthing/internal/sync"
 	"github.com/syncthing/syncthing/internal/versioner"
 )
 
@@ -32,7 +32,7 @@ import (
 const (
 	pauseIntv     = 60 * time.Second
 	nextPullIntv  = 10 * time.Second
-	checkPullIntv = 1 * time.Second
+	shortPullIntv = 5 * time.Second
 )
 
 // A pullBlockState is passed to the puller routine for each block that needs
@@ -69,15 +69,23 @@ type rwFolder struct {
 	copiers       int
 	pullers       int
 	shortID       uint64
+	order         config.PullOrder
 
-	stop      chan struct{}
-	queue     *jobQueue
-	dbUpdates chan protocol.FileInfo
+	stop        chan struct{}
+	queue       *jobQueue
+	dbUpdates   chan protocol.FileInfo
+	scanTimer   *time.Timer
+	pullTimer   *time.Timer
+	delayScan   chan time.Duration
+	remoteIndex chan struct{} // An index update was received, we should re-evaluate needs
 }
 
 func newRWFolder(m *Model, shortID uint64, cfg config.FolderConfiguration) *rwFolder {
 	return &rwFolder{
-		stateTracker: stateTracker{folder: cfg.ID},
+		stateTracker: stateTracker{
+			folder: cfg.ID,
+			mut:    sync.NewMutex(),
+		},
 
 		model:           m,
 		progressEmitter: m.progressEmitter,
@@ -90,9 +98,14 @@ func newRWFolder(m *Model, shortID uint64, cfg config.FolderConfiguration) *rwFo
 		copiers:       cfg.Copiers,
 		pullers:       cfg.Pullers,
 		shortID:       shortID,
+		order:         cfg.Order,
 
-		stop:  make(chan struct{}),
-		queue: newJobQueue(),
+		stop:        make(chan struct{}),
+		queue:       newJobQueue(),
+		pullTimer:   time.NewTimer(shortPullIntv),
+		scanTimer:   time.NewTimer(time.Millisecond), // The first scan should be done immediately.
+		delayScan:   make(chan time.Duration),
+		remoteIndex: make(chan struct{}, 1), // This needs to be 1-buffered so that we queue a notification if we're busy doing a pull when it comes.
 	}
 }
 
@@ -104,12 +117,9 @@ func (p *rwFolder) Serve() {
 		defer l.Debugln(p, "exiting")
 	}
 
-	pullTimer := time.NewTimer(checkPullIntv)
-	scanTimer := time.NewTimer(time.Millisecond) // The first scan should be done immediately.
-
 	defer func() {
-		pullTimer.Stop()
-		scanTimer.Stop()
+		p.pullTimer.Stop()
+		p.scanTimer.Stop()
 		// TODO: Should there be an actual FolderStopped state?
 		p.setState(FolderIdle)
 	}()
@@ -118,6 +128,11 @@ func (p *rwFolder) Serve() {
 	var prevIgnoreHash string
 
 	rescheduleScan := func() {
+		if p.scanIntv == 0 {
+			// We should not run scans, so it should not be rescheduled.
+			return
+		}
+
 		// Sleep a random time between 3/4 and 5/4 of the configured interval.
 		sleepNanos := (p.scanIntv.Nanoseconds()*3 + rand.Int63n(2*p.scanIntv.Nanoseconds())) / 4
 		intv := time.Duration(sleepNanos) * time.Nanosecond
@@ -125,7 +140,7 @@ func (p *rwFolder) Serve() {
 		if debug {
 			l.Debugln(p, "next rescan in", intv)
 		}
-		scanTimer.Reset(intv)
+		p.scanTimer.Reset(intv)
 	}
 
 	// We don't start pulling files until a scan has been completed.
@@ -136,17 +151,19 @@ func (p *rwFolder) Serve() {
 		case <-p.stop:
 			return
 
-		// TODO: We could easily add a channel here for notifications from
-		// Index(), so that we immediately start a pull when new index
-		// information is available. Before that though, I'd like to build a
-		// repeatable benchmark of how long it takes to sync a change from
-		// device A to device B, so we have something to work against.
-		case <-pullTimer.C:
+		case <-p.remoteIndex:
+			prevVer = 0
+			p.pullTimer.Reset(shortPullIntv)
+			if debug {
+				l.Debugln(p, "remote index updated, rescheduling pull")
+			}
+
+		case <-p.pullTimer.C:
 			if !initialScanCompleted {
 				if debug {
 					l.Debugln(p, "skip (initial)")
 				}
-				pullTimer.Reset(nextPullIntv)
+				p.pullTimer.Reset(nextPullIntv)
 				continue
 			}
 
@@ -170,7 +187,7 @@ func (p *rwFolder) Serve() {
 				if debug {
 					l.Debugln(p, "skip (curVer == prevVer)", prevVer)
 				}
-				pullTimer.Reset(checkPullIntv)
+				p.pullTimer.Reset(nextPullIntv)
 				continue
 			}
 
@@ -208,7 +225,7 @@ func (p *rwFolder) Serve() {
 					if debug {
 						l.Debugln(p, "next pull in", nextPullIntv)
 					}
-					pullTimer.Reset(nextPullIntv)
+					p.pullTimer.Reset(nextPullIntv)
 					break
 				}
 
@@ -221,7 +238,7 @@ func (p *rwFolder) Serve() {
 					if debug {
 						l.Debugln(p, "next pull in", pauseIntv)
 					}
-					pullTimer.Reset(pauseIntv)
+					p.pullTimer.Reset(pauseIntv)
 					break
 				}
 			}
@@ -230,7 +247,7 @@ func (p *rwFolder) Serve() {
 		// The reason for running the scanner from within the puller is that
 		// this is the easiest way to make sure we are not doing both at the
 		// same time.
-		case <-scanTimer.C:
+		case <-p.scanTimer.C:
 			if err := p.model.CheckFolderHealth(p.folder); err != nil {
 				l.Infoln("Skipping folder", p.folder, "scan due to folder error:", err)
 				rescheduleScan()
@@ -258,12 +275,26 @@ func (p *rwFolder) Serve() {
 				l.Infoln("Completed initial scan (rw) of folder", p.folder)
 				initialScanCompleted = true
 			}
+
+		case next := <-p.delayScan:
+			p.scanTimer.Reset(next)
 		}
 	}
 }
 
 func (p *rwFolder) Stop() {
 	close(p.stop)
+}
+
+func (p *rwFolder) IndexUpdated() {
+	select {
+	case p.remoteIndex <- struct{}{}:
+	default:
+		// We might be busy doing a pull and thus not reading from this
+		// channel. The channel is 1-buffered, so one notification will be
+		// queued to ensure we recheck after the pull, but beyond that we must
+		// make sure to not block index receiving.
+	}
 }
 
 func (p *rwFolder) String() string {
@@ -279,10 +310,10 @@ func (p *rwFolder) pullerIteration(ignores *ignore.Matcher) int {
 	copyChan := make(chan copyBlocksState)
 	finisherChan := make(chan *sharedPullerState)
 
-	var updateWg sync.WaitGroup
-	var copyWg sync.WaitGroup
-	var pullWg sync.WaitGroup
-	var doneWg sync.WaitGroup
+	updateWg := sync.NewWaitGroup()
+	copyWg := sync.NewWaitGroup()
+	pullWg := sync.NewWaitGroup()
+	doneWg := sync.NewWaitGroup()
 
 	if debug {
 		l.Debugln(p, "c", p.copiers, "p", p.pullers)
@@ -338,13 +369,9 @@ func (p *rwFolder) pullerIteration(ignores *ignore.Matcher) int {
 	buckets := map[string][]protocol.FileInfo{}
 
 	folderFiles.WithNeed(protocol.LocalDeviceID, func(intf db.FileIntf) bool {
-
-		// Needed items are delivered sorted lexicographically. This isn't
-		// really optimal from a performance point of view - it would be
-		// better if files were handled in random order, to spread the load
-		// over the cluster. But it means that we can be sure that we fully
-		// handle directories before the files that go inside them, which is
-		// nice.
+		// Needed items are delivered sorted lexicographically. We'll handle
+		// directories as they come along, so parents before children. Files
+		// are queued and the order may be changed later.
 
 		file := intf.(protocol.FileInfo)
 
@@ -384,12 +411,31 @@ func (p *rwFolder) pullerIteration(ignores *ignore.Matcher) int {
 		default:
 			// A new or changed file or symlink. This is the only case where we
 			// do stuff concurrently in the background
-			p.queue.Push(file.Name)
+			p.queue.Push(file.Name, file.Size(), file.Modified)
 		}
 
 		changed++
 		return true
 	})
+
+	// Reorder the file queue according to configuration
+
+	switch p.order {
+	case config.OrderRandom:
+		p.queue.Shuffle()
+	case config.OrderAlphabetic:
+		// The queue is already in alphabetic order.
+	case config.OrderSmallestFirst:
+		p.queue.SortSmallestFirst()
+	case config.OrderLargestFirst:
+		p.queue.SortLargestFirst()
+	case config.OrderOldestFirst:
+		p.queue.SortOldestFirst()
+	case config.OrderNewestFirst:
+		p.queue.SortOldestFirst()
+	}
+
+	// Process the file queue
 
 nextFile:
 	for {
@@ -781,7 +827,7 @@ func (p *rwFolder) handleFile(file protocol.FileInfo, copyChan chan<- copyBlocks
 		reused = len(file.Blocks) - len(blocks)
 		if reused == 0 {
 			// Otherwise, discard the file ourselves in order for the
-			// sharedpuller not to panic when it fails to exlusively create a
+			// sharedpuller not to panic when it fails to exclusively create a
 			// file which already exists
 			os.Remove(tempName)
 		}
@@ -799,6 +845,7 @@ func (p *rwFolder) handleFile(file protocol.FileInfo, copyChan chan<- copyBlocks
 		reused:      reused,
 		ignorePerms: p.ignorePerms,
 		version:     curFile.Version,
+		mut:         sync.NewMutex(),
 	}
 
 	if debug {
@@ -850,7 +897,7 @@ func (p *rwFolder) shortcutFile(file protocol.FileInfo) (err error) {
 	return
 }
 
-// shortcutSymlink changes the symlinks type if necessery.
+// shortcutSymlink changes the symlinks type if necessary.
 func (p *rwFolder) shortcutSymlink(file protocol.FileInfo) (err error) {
 	err = symlinks.ChangeType(filepath.Join(p.dir, file.Name), file.Flags)
 	if err == nil {
@@ -951,7 +998,7 @@ func (p *rwFolder) pullerRoutine(in <-chan pullBlockState, out chan<- *sharedPul
 			continue
 		}
 
-		// Get an fd to the temporary file. Tehcnically we don't need it until
+		// Get an fd to the temporary file. Technically we don't need it until
 		// after fetching the block, but if we run into an error here there is
 		// no point in issuing the request to the network.
 		fd, err := state.tempFile()
@@ -1139,6 +1186,10 @@ func (p *rwFolder) Jobs() ([]string, []string) {
 	return p.queue.Jobs()
 }
 
+func (p *rwFolder) DelayScan(next time.Duration) {
+	p.delayScan <- next
+}
+
 // dbUpdaterRoutine aggregates db updates and commits them in batches no
 // larger than 1000 items, and no more delayed than 2 seconds.
 func (p *rwFolder) dbUpdaterRoutine() {
@@ -1220,5 +1271,13 @@ func moveForConflict(name string) error {
 	ext := filepath.Ext(name)
 	withoutExt := name[:len(name)-len(ext)]
 	newName := withoutExt + time.Now().Format(".sync-conflict-20060102-150405") + ext
-	return os.Rename(name, newName)
+	err := os.Rename(name, newName)
+	if os.IsNotExist(err) {
+		// We were supposed to move a file away but it does not exist. Either
+		// the user has already moved it away, or the conflict was between a
+		// remote modification and a local delete. In either way it does not
+		// matter, go ahead as if the move succeeded.
+		return nil
+	}
+	return err
 }

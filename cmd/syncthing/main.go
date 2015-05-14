@@ -10,6 +10,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -35,10 +36,10 @@ import (
 	"github.com/syncthing/syncthing/internal/osutil"
 	"github.com/syncthing/syncthing/internal/symlinks"
 	"github.com/syncthing/syncthing/internal/upgrade"
-	"github.com/syncthing/syncthing/internal/upnp"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/errors"
 	"github.com/syndtr/goleveldb/leveldb/opt"
+	"github.com/thejerf/suture"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -108,8 +109,6 @@ var (
 	readRateLimit  *ratelimit.Bucket
 	stop           = make(chan int)
 	discoverer     *discover.Discoverer
-	externalPort   int
-	igd            *upnp.IGD
 	cert           tls.Certificate
 	lans           []*net.IPNet
 )
@@ -151,6 +150,7 @@ are mostly useful for developers. Use with care.
                  - "events"   (the events package)
                  - "files"    (the files package)
                  - "http"     (the main package; HTTP requests)
+                 - "locks"    (the sync package; trace long held locks)
                  - "net"      (the main package; connections & network messages)
                  - "model"    (the model package)
                  - "scanner"  (the scanner package)
@@ -194,6 +194,8 @@ var (
 	noConsole         bool
 	generateDir       string
 	logFile           string
+	auditEnabled      bool
+	verbose           bool
 	noRestart         = os.Getenv("STNORESTART") != ""
 	noUpgrade         = true
 	guiAddress        = os.Getenv("STGUIADDRESS") // legacy
@@ -230,6 +232,8 @@ func main() {
 	flag.BoolVar(&doUpgradeCheck, "upgrade-check", false, "Check for available upgrade")
 	flag.BoolVar(&showVersion, "version", false, "Show version")
 	flag.StringVar(&upgradeTo, "upgrade-to", upgradeTo, "Force upgrade directly from specified URL")
+	flag.BoolVar(&auditEnabled, "audit", false, "Write events to audit file")
+	flag.BoolVar(&verbose, "verbose", false, "Print verbose log output")
 
 	flag.Usage = usageFor(flag.CommandLine, usage, fmt.Sprintf(extraUsage, baseDirs["config"]))
 	flag.Parse()
@@ -346,7 +350,13 @@ func main() {
 			// Use leveldb database locks to protect against concurrent upgrades
 			_, err = leveldb.OpenFile(locations[locDatabase], &opt.Options{OpenFilesCacheCapacity: 100})
 			if err != nil {
-				l.Fatalln("Cannot upgrade, database seems to be locked. Is another copy of Syncthing already running?")
+				l.Infoln("Attempting upgrade through running Syncthing...")
+				err = upgradeViaRest()
+				if err != nil {
+					l.Fatalln("Upgrade:", err)
+				}
+				l.Okln("Syncthing upgrading")
+				return
 			}
 
 			err = upgrade.To(rel)
@@ -371,8 +381,65 @@ func main() {
 	}
 }
 
+func upgradeViaRest() error {
+	cfg, err := config.Load(locations[locConfigFile], protocol.LocalDeviceID)
+	if err != nil {
+		return err
+	}
+	target := cfg.GUI().Address
+	if cfg.GUI().UseTLS {
+		target = "https://" + target
+	} else {
+		target = "http://" + target
+	}
+	r, _ := http.NewRequest("POST", target+"/rest/system/upgrade", nil)
+	r.Header.Set("X-API-Key", cfg.GUI().APIKey)
+
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{
+		Transport: tr,
+		Timeout:   60 * time.Second,
+	}
+	resp, err := client.Do(r)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != 200 {
+		bs, err := ioutil.ReadAll(resp.Body)
+		defer resp.Body.Close()
+		if err != nil {
+			return err
+		}
+		return errors.New(string(bs))
+	}
+
+	return err
+}
+
 func syncthingMain() {
-	var err error
+	// Create a main service manager. We'll add things to this as we go along.
+	// We want any logging it does to go through our log system, with INFO
+	// severity.
+	mainSvc := suture.New("main", suture.Spec{
+		Log: func(line string) {
+			l.Infoln(line)
+		},
+	})
+	mainSvc.ServeBackground()
+
+	// Set a log prefix similar to the ID we will have later on, or early log
+	// lines look ugly.
+	l.SetPrefix("[start] ")
+
+	if auditEnabled {
+		startAuditing(mainSvc)
+	}
+
+	if verbose {
+		mainSvc.Add(newVerboseSvc())
+	}
 
 	if len(os.Getenv("GOMAXPROCS")) == 0 {
 		runtime.GOMAXPROCS(runtime.NumCPU())
@@ -381,7 +448,7 @@ func syncthingMain() {
 	events.Default.Log(events.Starting, map[string]string{"home": baseDirs["config"]})
 
 	// Ensure that that we have a certificate and key.
-	cert, err = tls.LoadX509KeyPair(locations[locCertFile], locations[locKeyFile])
+	cert, err := tls.LoadX509KeyPair(locations[locCertFile], locations[locKeyFile])
 	if err != nil {
 		cert, err = newCertificate(locations[locCertFile], locations[locKeyFile], tlsDefaultCommonName)
 		if err != nil {
@@ -501,10 +568,9 @@ func syncthingMain() {
 	}
 
 	dbFile := locations[locDatabase]
-	dbOpts := &opt.Options{OpenFilesCacheCapacity: 100}
-	ldb, err := leveldb.OpenFile(dbFile, dbOpts)
+	ldb, err := leveldb.OpenFile(dbFile, dbOpts())
 	if err != nil && errors.IsCorrupted(err) {
-		ldb, err = leveldb.RecoverFile(dbFile, dbOpts)
+		ldb, err = leveldb.RecoverFile(dbFile, dbOpts())
 	}
 	if err != nil {
 		l.Fatalln("Cannot open database:", err, "- Is another copy of Syncthing already running?")
@@ -532,7 +598,7 @@ func syncthingMain() {
 
 	// GUI
 
-	setupGUI(cfg, m)
+	setupGUI(mainSvc, cfg, m)
 
 	// Clear out old indexes for other devices. Otherwise we'll start up and
 	// start needing a bunch of files which are nowhere to be found. This
@@ -553,18 +619,22 @@ func syncthingMain() {
 	if err != nil {
 		l.Fatalln("Bad listen address:", err)
 	}
-	externalPort = addr.Port
 
-	// UPnP
-	igd = nil
+	// Start discovery
+
+	localPort := addr.Port
+	discoverer = discovery(localPort)
+
+	// Start UPnP. The UPnP service will restart global discovery if the
+	// external port changes.
 
 	if opts.UPnPEnabled {
-		setupUPnP()
+		upnpSvc := newUPnPSvc(cfg, localPort)
+		mainSvc.Add(upnpSvc)
 	}
 
-	// Routine to connect out to configured devices
-	discoverer = discovery(externalPort)
-	go listenConnect(myID, m, tlsCfg)
+	connectionSvc := newConnectionSvc(cfg, myID, m, tlsCfg)
+	mainSvc.Add(connectionSvc)
 
 	for _, folder := range cfg.Folders() {
 		// Routine to pull blocks from other devices to synchronize the local
@@ -638,11 +708,61 @@ func syncthingMain() {
 
 	code := <-stop
 
+	mainSvc.Stop()
+
 	l.Okln("Exiting")
 	os.Exit(code)
 }
 
-func setupGUI(cfg *config.Wrapper, m *model.Model) {
+func dbOpts() *opt.Options {
+	// Calculate a sutiable database block cache capacity. We start at the
+	// default of 8 MiB and use larger values for machines with more memory.
+	// In reality, the database will use twice the amount we calculate here,
+	// as it also has two write buffers each sized at half the block cache.
+
+	blockCacheCapacity := 8 << 20
+	if bytes, err := memorySize(); err == nil {
+		if bytes > 74<<30 {
+			// At 74 GiB of RAM, we hit a 256 MiB block cache (per the
+			// calculations below). There's probably no point in growing the
+			// cache beyond this point.
+			blockCacheCapacity = 256 << 20
+		} else if bytes > 8<<30 {
+			// Slowly grow from 128 MiB at 8 GiB of RAM up to 256 MiB for a
+			// ~74 GiB RAM machine
+			blockCacheCapacity = int(bytes/512) + 128 - 16
+		} else if bytes > 512<<20 {
+			// Grow from 8 MiB at start to 128 MiB of cache at 8 GiB of RAM.
+			blockCacheCapacity = int(bytes / 64)
+		}
+		l.Infoln("Database block cache capacity", blockCacheCapacity/1024, "KiB")
+	}
+
+	return &opt.Options{
+		OpenFilesCacheCapacity: 100,
+		BlockCacheCapacity:     blockCacheCapacity,
+		WriteBuffer:            blockCacheCapacity / 2,
+	}
+}
+
+func startAuditing(mainSvc *suture.Supervisor) {
+	auditFile := timestampedLoc(locAuditLog)
+	fd, err := os.OpenFile(auditFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		l.Fatalln("Audit:", err)
+	}
+
+	auditSvc := newAuditSvc(fd)
+	mainSvc.Add(auditSvc)
+
+	// We wait for the audit service to fully start before we return, to
+	// ensure we capture all events from the start.
+	auditSvc.WaitForStart()
+
+	l.Infoln("Audit log in", auditFile)
+}
+
+func setupGUI(mainSvc *suture.Supervisor, cfg *config.Wrapper, m *model.Model) {
 	opts := cfg.Options()
 	guiCfg := overrideGUIConfig(cfg.GUI(), guiAddress, guiAuthentication, guiAPIKey)
 
@@ -671,10 +791,12 @@ func setupGUI(cfg *config.Wrapper, m *model.Model) {
 
 			urlShow := fmt.Sprintf("%s://%s/", proto, net.JoinHostPort(hostShow, strconv.Itoa(addr.Port)))
 			l.Infoln("Starting web GUI on", urlShow)
-			err := startGUI(guiCfg, guiAssets, m)
+			api, err := newAPISvc(guiCfg, guiAssets, m)
 			if err != nil {
 				l.Fatalln("Cannot start GUI:", err)
 			}
+			mainSvc.Add(api)
+
 			if opts.StartBrowser && !noBrowser && !stRestarting {
 				urlOpen := fmt.Sprintf("%s://%s/", proto, net.JoinHostPort(hostOpen, strconv.Itoa(addr.Port)))
 				// Can potentially block if the utility we are invoking doesn't
@@ -721,110 +843,6 @@ func generatePingEvents() {
 	for {
 		time.Sleep(pingEventInterval)
 		events.Default.Log(events.Ping, nil)
-	}
-}
-
-func setupUPnP() {
-	if opts := cfg.Options(); len(opts.ListenAddress) == 1 {
-		_, portStr, err := net.SplitHostPort(opts.ListenAddress[0])
-		if err != nil {
-			l.Warnln("Bad listen address:", err)
-		} else {
-			// Set up incoming port forwarding, if necessary and possible
-			port, _ := strconv.Atoi(portStr)
-			igds := upnp.Discover(time.Duration(cfg.Options().UPnPTimeoutS) * time.Second)
-			if len(igds) > 0 {
-				// Configure the first discovered IGD only. This is a work-around until we have a better mechanism
-				// for handling multiple IGDs, which will require changes to the global discovery service
-				igd = &igds[0]
-
-				externalPort = setupExternalPort(igd, port)
-				if externalPort == 0 {
-					l.Warnln("Failed to create UPnP port mapping")
-				} else {
-					l.Infof("Created UPnP port mapping for external port %d on UPnP device %s.", externalPort, igd.FriendlyIdentifier())
-
-					if opts.UPnPRenewalM > 0 {
-						go renewUPnP(port)
-					}
-				}
-			}
-		}
-	} else {
-		l.Warnln("Multiple listening addresses; not attempting UPnP port mapping")
-	}
-}
-
-func setupExternalPort(igd *upnp.IGD, port int) int {
-	if igd == nil {
-		return 0
-	}
-
-	for i := 0; i < 10; i++ {
-		r := 1024 + predictableRandom.Intn(65535-1024)
-		err := igd.AddPortMapping(upnp.TCP, r, port, fmt.Sprintf("syncthing-%d", r), cfg.Options().UPnPLeaseM*60)
-		if err == nil {
-			return r
-		}
-	}
-	return 0
-}
-
-func renewUPnP(port int) {
-	for {
-		opts := cfg.Options()
-		time.Sleep(time.Duration(opts.UPnPRenewalM) * time.Minute)
-		// Some values might have changed while we were sleeping
-		opts = cfg.Options()
-
-		// Make sure our IGD reference isn't nil
-		if igd == nil {
-			if debugNet {
-				l.Debugln("Undefined IGD during UPnP port renewal. Re-discovering...")
-			}
-			igds := upnp.Discover(time.Duration(opts.UPnPTimeoutS) * time.Second)
-			if len(igds) > 0 {
-				// Configure the first discovered IGD only. This is a work-around until we have a better mechanism
-				// for handling multiple IGDs, which will require changes to the global discovery service
-				igd = &igds[0]
-			} else {
-				if debugNet {
-					l.Debugln("Failed to discover IGD during UPnP port mapping renewal.")
-				}
-				continue
-			}
-		}
-
-		// Just renew the same port that we already have
-		if externalPort != 0 {
-			err := igd.AddPortMapping(upnp.TCP, externalPort, port, "syncthing", opts.UPnPLeaseM*60)
-			if err != nil {
-				l.Warnf("Error renewing UPnP port mapping for external port %d on device %s: %s", externalPort, igd.FriendlyIdentifier(), err.Error())
-			} else if debugNet {
-				l.Debugf("Renewed UPnP port mapping for external port %d on device %s.", externalPort, igd.FriendlyIdentifier())
-			}
-
-			continue
-		}
-
-		// Something strange has happened. We didn't have an external port before?
-		// Or perhaps the gateway has changed?
-		// Retry the same port sequence from the beginning.
-		if debugNet {
-			l.Debugln("No UPnP port mapping defined, updating...")
-		}
-
-		forwardedPort := setupExternalPort(igd, port)
-		if forwardedPort != 0 {
-			externalPort = forwardedPort
-			discoverer.StopGlobal()
-			discoverer.StartGlobal(opts.GlobalAnnServers, uint16(forwardedPort))
-			if debugNet {
-				l.Debugf("Updated UPnP port mapping for external port %d on device %s.", forwardedPort, igd.FriendlyIdentifier())
-			}
-		} else {
-			l.Warnf("Failed to update UPnP port mapping for external port on device " + igd.FriendlyIdentifier() + ".")
-		}
 	}
 }
 
@@ -1011,6 +1029,7 @@ func autoUpgrade() {
 func cleanConfigDirectory() {
 	patterns := map[string]time.Duration{
 		"panic-*.log":    7 * 24 * time.Hour,  // keep panic logs for a week
+		"audit-*.log":    7 * 24 * time.Hour,  // keep audit logs for a week
 		"index":          14 * 24 * time.Hour, // keep old index format for two weeks
 		"config.xml.v*":  30 * 24 * time.Hour, // old config versions for a month
 		"*.idx.gz":       30 * 24 * time.Hour, // these should for sure no longer exist
@@ -1019,7 +1038,7 @@ func cleanConfigDirectory() {
 
 	for pat, dur := range patterns {
 		pat = filepath.Join(baseDirs["config"], pat)
-		files, err := filepath.Glob(pat)
+		files, err := osutil.Glob(pat)
 		if err != nil {
 			l.Infoln("Cleaning:", err)
 			continue

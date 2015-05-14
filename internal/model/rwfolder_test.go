@@ -393,7 +393,7 @@ func TestDeregisterOnFailInCopy(t *testing.T) {
 	}
 
 	// queue.Done should be called by the finisher routine
-	p.queue.Push("filex")
+	p.queue.Push("filex", 0, 0)
 	p.queue.Pop()
 
 	if len(p.queue.progress) != 1 {
@@ -410,7 +410,7 @@ func TestDeregisterOnFailInCopy(t *testing.T) {
 
 	p.handleFile(file, copyChan, finisherChan)
 
-	// Receive a block at puller, to indicate that atleast a single copier
+	// Receive a block at puller, to indicate that at least a single copier
 	// loop has been performed.
 	toPull := <-pullChan
 	// Wait until copier is trying to pass something down to the puller again
@@ -480,7 +480,7 @@ func TestDeregisterOnFailInPull(t *testing.T) {
 	}
 
 	// queue.Done should be called by the finisher routine
-	p.queue.Push("filex")
+	p.queue.Push("filex", 0, 0)
 	p.queue.Pop()
 
 	if len(p.queue.progress) != 1 {

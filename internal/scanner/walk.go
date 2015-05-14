@@ -46,7 +46,7 @@ type Walker struct {
 	BlockSize int
 	// If Matcher is not nil, it is used to identify files to ignore which were specified by the user.
 	Matcher *ignore.Matcher
-	// If TempNamer is not nil, it is used to ignore tempory files when walking.
+	// If TempNamer is not nil, it is used to ignore temporary files when walking.
 	TempNamer TempNamer
 	// Number of hours to keep temporary files for
 	TempLifetime time.Duration
@@ -89,14 +89,9 @@ func (w *Walker) Walk() (chan protocol.FileInfo, error) {
 		return nil, err
 	}
 
-	workers := w.Hashers
-	if workers < 1 {
-		workers = runtime.NumCPU()
-	}
-
 	files := make(chan protocol.FileInfo)
 	hashedFiles := make(chan protocol.FileInfo)
-	newParallelHasher(w.Dir, w.BlockSize, workers, hashedFiles, files)
+	newParallelHasher(w.Dir, w.BlockSize, w.Hashers, hashedFiles, files)
 
 	go func() {
 		hashFiles := w.walkAndHashFiles(files)
@@ -158,7 +153,7 @@ func (w *Walker) walkAndHashFiles(fchan chan protocol.FileInfo) filepath.WalkFun
 		}
 
 		if sn := filepath.Base(rn); sn == ".stignore" || sn == ".stfolder" ||
-			strings.HasPrefix(rn, ".stversions") || (w.Matcher != nil && w.Matcher.Match(rn)) {
+			strings.HasPrefix(rn, ".stversions") || w.Matcher.Match(rn) {
 			// An ignored file
 			if debug {
 				l.Debugln("ignored:", rn)
@@ -313,6 +308,11 @@ func (w *Walker) walkAndHashFiles(fchan chan protocol.FileInfo) filepath.WalkFun
 		}
 
 		if info.Mode().IsRegular() {
+			curMode := uint32(info.Mode())
+			if runtime.GOOS == "windows" && osutil.IsWindowsExecutable(rn) {
+				curMode |= 0111
+			}
+
 			if w.CurrentFiler != nil {
 				// A file is "unchanged", if it
 				//  - exists
@@ -324,7 +324,7 @@ func (w *Walker) walkAndHashFiles(fchan chan protocol.FileInfo) filepath.WalkFun
 				//  - was not invalid (since it looks valid now)
 				//  - has the same size as previously
 				cf, ok = w.CurrentFiler.CurrentFile(rn)
-				permUnchanged := w.IgnorePerms || !cf.HasPermissionBits() || PermsEqual(cf.Flags, uint32(info.Mode()))
+				permUnchanged := w.IgnorePerms || !cf.HasPermissionBits() || PermsEqual(cf.Flags, curMode)
 				if ok && permUnchanged && !cf.IsDeleted() && cf.Modified == info.ModTime().Unix() && !cf.IsDirectory() &&
 					!cf.IsSymlink() && !cf.IsInvalid() && cf.Size() == info.Size() {
 					return nil
@@ -335,7 +335,7 @@ func (w *Walker) walkAndHashFiles(fchan chan protocol.FileInfo) filepath.WalkFun
 				}
 			}
 
-			var flags = uint32(info.Mode() & maskModePerm)
+			var flags = curMode & uint32(maskModePerm)
 			if w.IgnorePerms {
 				flags = protocol.FlagNoPermBits | 0666
 			}
@@ -379,18 +379,17 @@ func PermsEqual(a, b uint32) bool {
 	}
 }
 
-// If the target is missing, Unix never knows what type of symlink it is
-// and Windows always knows even if there is no target.
-// Which means that without this special check a Unix node would be fighting
-// with a Windows node about whether or not the target is known.
-// Basically, if you don't know and someone else knows, just accept it.
-// The fact that you don't know means you are on Unix, and on Unix you don't
-// really care what the target type is. The moment you do know, and if something
-// doesn't match, that will propogate throught the cluster.
 func SymlinkTypeEqual(disk, index uint32) bool {
+	// If the target is missing, Unix never knows what type of symlink it is
+	// and Windows always knows even if there is no target. Which means that
+	// without this special check a Unix node would be fighting with a Windows
+	// node about whether or not the target is known. Basically, if you don't
+	// know and someone else knows, just accept it. The fact that you don't
+	// know means you are on Unix, and on Unix you don't really care what the
+	// target type is. The moment you do know, and if something doesn't match,
+	// that will propagate through the cluster.
 	if disk&protocol.FlagSymlinkMissingTarget != 0 && index&protocol.FlagSymlinkMissingTarget == 0 {
 		return true
 	}
 	return disk&protocol.SymlinkTypeMask == index&protocol.SymlinkTypeMask
-
 }

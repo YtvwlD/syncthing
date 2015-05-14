@@ -16,10 +16,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/syncthing/syncthing/internal/fnmatch"
+	"github.com/syncthing/syncthing/internal/sync"
 )
 
 type Pattern struct {
@@ -30,9 +30,8 @@ type Pattern struct {
 func (p Pattern) String() string {
 	if p.include {
 		return p.match.String()
-	} else {
-		return "(?exclude)" + p.match.String()
 	}
+	return "(?exclude)" + p.match.String()
 }
 
 type Matcher struct {
@@ -48,6 +47,7 @@ func New(withCache bool) *Matcher {
 	m := &Matcher{
 		withCache: withCache,
 		stop:      make(chan struct{}),
+		mut:       sync.NewMutex(),
 	}
 	if withCache {
 		go m.clean(2 * time.Hour)
@@ -94,6 +94,10 @@ func (m *Matcher) Parse(r io.Reader, file string) error {
 }
 
 func (m *Matcher) Match(file string) (result bool) {
+	if m == nil {
+		return false
+	}
+
 	m.mut.Lock()
 	defer m.mut.Unlock()
 
@@ -127,6 +131,10 @@ func (m *Matcher) Match(file string) (result bool) {
 
 // Patterns return a list of the loaded regexp patterns, as strings
 func (m *Matcher) Patterns() []string {
+	if m == nil {
+		return nil
+	}
+
 	m.mut.Lock()
 	defer m.mut.Unlock()
 

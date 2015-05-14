@@ -45,28 +45,28 @@ type Configuration struct {
 	OriginalVersion int `xml:"-" json:"-"` // The version we read from disk, before any conversion
 }
 
-func (orig Configuration) Copy() Configuration {
-	c := orig
+func (cfg Configuration) Copy() Configuration {
+	newCfg := cfg
 
 	// Deep copy FolderConfigurations
-	c.Folders = make([]FolderConfiguration, len(orig.Folders))
-	for i := range c.Folders {
-		c.Folders[i] = orig.Folders[i].Copy()
+	newCfg.Folders = make([]FolderConfiguration, len(cfg.Folders))
+	for i := range newCfg.Folders {
+		newCfg.Folders[i] = cfg.Folders[i].Copy()
 	}
 
 	// Deep copy DeviceConfigurations
-	c.Devices = make([]DeviceConfiguration, len(orig.Devices))
-	for i := range c.Devices {
-		c.Devices[i] = orig.Devices[i].Copy()
+	newCfg.Devices = make([]DeviceConfiguration, len(cfg.Devices))
+	for i := range newCfg.Devices {
+		newCfg.Devices[i] = cfg.Devices[i].Copy()
 	}
 
-	c.Options = orig.Options.Copy()
+	newCfg.Options = cfg.Options.Copy()
 
 	// DeviceIDs are values
-	c.IgnoredDevices = make([]protocol.DeviceID, len(orig.IgnoredDevices))
-	copy(c.IgnoredDevices, orig.IgnoredDevices)
+	newCfg.IgnoredDevices = make([]protocol.DeviceID, len(cfg.IgnoredDevices))
+	copy(newCfg.IgnoredDevices, cfg.IgnoredDevices)
 
-	return c
+	return newCfg
 }
 
 type FolderConfiguration struct {
@@ -82,16 +82,17 @@ type FolderConfiguration struct {
 	Copiers         int                         `xml:"copiers" json:"copiers"` // This defines how many files are handled concurrently.
 	Pullers         int                         `xml:"pullers" json:"pullers"` // Defines how many blocks are fetched at the same time, possibly between separate copier routines.
 	Hashers         int                         `xml:"hashers" json:"hashers"` // Less than one sets the value to the number of cores. These are CPU bound due to hashing.
+	Order           PullOrder                   `xml:"order" json:"order"`
 
 	Invalid string `xml:"-" json:"invalid"` // Set at runtime when there is an error, not saved
 
 	deviceIDs []protocol.DeviceID
 }
 
-func (orig FolderConfiguration) Copy() FolderConfiguration {
-	c := orig
-	c.Devices = make([]FolderDeviceConfiguration, len(orig.Devices))
-	copy(c.Devices, orig.Devices)
+func (f FolderConfiguration) Copy() FolderConfiguration {
+	c := f
+	c.Devices = make([]FolderDeviceConfiguration, len(f.Devices))
+	copy(c.Devices, f.Devices)
 	return c
 }
 
@@ -227,9 +228,9 @@ type OptionsConfiguration struct {
 	ReconnectIntervalS      int      `xml:"reconnectionIntervalS" json:"reconnectionIntervalS" default:"60"`
 	StartBrowser            bool     `xml:"startBrowser" json:"startBrowser" default:"true"`
 	UPnPEnabled             bool     `xml:"upnpEnabled" json:"upnpEnabled" default:"true"`
-	UPnPLeaseM              int      `xml:"upnpLeaseMinutes" json:"upnpLeaseMinutes" default:"0"`
+	UPnPLeaseM              int      `xml:"upnpLeaseMinutes" json:"upnpLeaseMinutes" default:"60"`
 	UPnPRenewalM            int      `xml:"upnpRenewalMinutes" json:"upnpRenewalMinutes" default:"30"`
-	UPnPTimeoutS            int      `xml:"upnpTimeoutSeconds" json:"upnpTimeoutSeconds" default:"3"`
+	UPnPTimeoutS            int      `xml:"upnpTimeoutSeconds" json:"upnpTimeoutSeconds" default:"10"`
 	URAccepted              int      `xml:"urAccepted" json:"urAccepted"` // Accepted usage reporting version; 0 for off (undecided), -1 for off (permanently)
 	URUniqueID              string   `xml:"urUniqueID" json:"urUniqueId"` // Unique ID for reporting purposes, regenerated when UR is turned on.
 	RestartOnWakeup         bool     `xml:"restartOnWakeup" json:"restartOnWakeup" default:"true"`
@@ -677,4 +678,58 @@ func randomString(l int) string {
 		bs[i] = randomCharset[rand.Intn(len(randomCharset))]
 	}
 	return string(bs)
+}
+
+type PullOrder int
+
+const (
+	OrderRandom PullOrder = iota // default is random
+	OrderAlphabetic
+	OrderSmallestFirst
+	OrderLargestFirst
+	OrderOldestFirst
+	OrderNewestFirst
+)
+
+func (o PullOrder) String() string {
+	switch o {
+	case OrderRandom:
+		return "random"
+	case OrderAlphabetic:
+		return "alphabetic"
+	case OrderSmallestFirst:
+		return "smallestFirst"
+	case OrderLargestFirst:
+		return "largestFirst"
+	case OrderOldestFirst:
+		return "oldestFirst"
+	case OrderNewestFirst:
+		return "newestFirst"
+	default:
+		return "unknown"
+	}
+}
+
+func (o PullOrder) MarshalText() ([]byte, error) {
+	return []byte(o.String()), nil
+}
+
+func (o *PullOrder) UnmarshalText(bs []byte) error {
+	switch string(bs) {
+	case "random":
+		*o = OrderRandom
+	case "alphabetic":
+		*o = OrderAlphabetic
+	case "smallestFirst":
+		*o = OrderSmallestFirst
+	case "largestFirst":
+		*o = OrderLargestFirst
+	case "oldestFirst":
+		*o = OrderOldestFirst
+	case "newestFirst":
+		*o = OrderNewestFirst
+	default:
+		*o = OrderRandom
+	}
+	return nil
 }
