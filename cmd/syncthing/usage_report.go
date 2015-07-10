@@ -11,12 +11,15 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"runtime"
 	"time"
 
+	"github.com/syncthing/syncthing/internal/config"
 	"github.com/syncthing/syncthing/internal/model"
+	"github.com/thejerf/suture"
 )
 
 // Current version number of the usage report, for acceptance purposes. If
@@ -24,8 +27,54 @@ import (
 // are prompted for acceptance of the new report.
 const usageReportVersion = 1
 
-var stopUsageReportingCh = make(chan struct{})
+type usageReportingManager struct {
+	model *model.Model
+	sup   *suture.Supervisor
+}
 
+func newUsageReportingManager(m *model.Model, cfg *config.Wrapper) *usageReportingManager {
+	mgr := &usageReportingManager{
+		model: m,
+	}
+
+	// Start UR if it's enabled.
+	mgr.CommitConfiguration(config.Configuration{}, cfg.Raw())
+
+	// Listen to future config changes so that we can start and stop as
+	// appropriate.
+	cfg.Subscribe(mgr)
+
+	return mgr
+}
+
+func (m *usageReportingManager) VerifyConfiguration(from, to config.Configuration) error {
+	return nil
+}
+
+func (m *usageReportingManager) CommitConfiguration(from, to config.Configuration) bool {
+	if to.Options.URAccepted >= usageReportVersion && m.sup == nil {
+		// Usage reporting was turned on; lets start it.
+		svc := &usageReportingService{
+			model: m.model,
+		}
+		m.sup = suture.NewSimple("usageReporting")
+		m.sup.Add(svc)
+		m.sup.ServeBackground()
+	} else if to.Options.URAccepted < usageReportVersion && m.sup != nil {
+		// Usage reporting was turned off
+		m.sup.Stop()
+		m.sup = nil
+	}
+
+	return true
+}
+
+func (m *usageReportingManager) String() string {
+	return fmt.Sprintf("usageReportingManager@%p", m)
+}
+
+// reportData returns the data to be sent in a usage report. It's used in
+// various places, so not part of the usageReportingSvc object.
 func reportData(m *model.Model) map[string]interface{} {
 	res := make(map[string]interface{})
 	res["uniqueID"] = cfg.Options().URUniqueID
@@ -75,8 +124,13 @@ func reportData(m *model.Model) map[string]interface{} {
 	return res
 }
 
-func sendUsageReport(m *model.Model) error {
-	d := reportData(m)
+type usageReportingService struct {
+	model *model.Model
+	stop  chan struct{}
+}
+
+func (s *usageReportingService) sendUsageReport() error {
+	d := reportData(s.model)
 	var b bytes.Buffer
 	json.NewEncoder(&b).Encode(d)
 
@@ -94,32 +148,32 @@ func sendUsageReport(m *model.Model) error {
 	return err
 }
 
-func usageReportingLoop(m *model.Model) {
+func (s *usageReportingService) Serve() {
+	s.stop = make(chan struct{})
+
 	l.Infoln("Starting usage reporting")
-	t := time.NewTicker(86400 * time.Second)
-loop:
+	defer l.Infoln("Stopping usage reporting")
+
+	t := time.NewTimer(10 * time.Minute) // time to initial report at start
 	for {
 		select {
-		case <-stopUsageReportingCh:
-			break loop
+		case <-s.stop:
+			return
 		case <-t.C:
-			err := sendUsageReport(m)
+			err := s.sendUsageReport()
 			if err != nil {
 				l.Infoln("Usage report:", err)
 			}
+			t.Reset(24 * time.Hour) // next report tomorrow
 		}
 	}
-	l.Infoln("Stopping usage reporting")
 }
 
-func stopUsageReporting() {
-	select {
-	case stopUsageReportingCh <- struct{}{}:
-	default:
-	}
+func (s *usageReportingService) Stop() {
+	close(s.stop)
 }
 
-// Returns CPU performance as a measure of single threaded SHA-256 MiB/s
+// cpuBench returns CPU performance as a measure of single threaded SHA-256 MiB/s
 func cpuBench() float64 {
 	chunkSize := 100 * 1 << 10
 	h := sha256.New()

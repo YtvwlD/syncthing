@@ -12,6 +12,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"runtime"
 	"strconv"
 	"time"
 
@@ -85,17 +86,10 @@ func (d *Discoverer) StartLocal(localPort int, localMCAddr string) {
 }
 
 func (d *Discoverer) startLocalIPv4Broadcasts(localPort int) {
-	bb, err := beacon.NewBroadcast(localPort)
-	if err != nil {
-		if debug {
-			l.Debugln("discover: Start local v4:", err)
-		}
-		l.Infoln("Local discovery over IPv4 unavailable")
-		return
-	}
-
+	bb := beacon.NewBroadcast(localPort)
 	d.beacons = append(d.beacons, bb)
 	go d.recvAnnouncements(bb)
+	bb.ServeBackground()
 }
 
 func (d *Discoverer) startLocalIPv6Multicasts(localMCAddr string) {
@@ -110,7 +104,8 @@ func (d *Discoverer) startLocalIPv6Multicasts(localMCAddr string) {
 
 	v6Intfs := 0
 	for _, intf := range intfs {
-		if intf.Flags&net.FlagUp == 0 || intf.Flags&net.FlagMulticast == 0 {
+		// Interface flags seem to always be 0 on Windows
+		if runtime.GOOS != "windows" && (intf.Flags&net.FlagUp == 0 || intf.Flags&net.FlagMulticast == 0) {
 			continue
 		}
 

@@ -110,6 +110,9 @@ func main() {
 		case "test":
 			test("./...")
 
+		case "bench":
+			bench("./...")
+
 		case "assets":
 			assets()
 
@@ -130,6 +133,9 @@ func main() {
 
 		case "zip":
 			buildZip()
+
+		case "deb":
+			buildDeb()
 
 		case "clean":
 			clean()
@@ -177,6 +183,11 @@ func setup() {
 func test(pkg string) {
 	setBuildEnv()
 	runPrint("go", "test", "-short", "-timeout", "60s", pkg)
+}
+
+func bench(pkg string) {
+	setBuildEnv()
+	runPrint("go", "test", "-run", "NONE", "-bench", ".", pkg)
 }
 
 func install(pkg string, tags []string) {
@@ -270,6 +281,95 @@ func buildZip() {
 
 	zipFile(filename, files)
 	log.Println(filename)
+}
+
+func buildDeb() {
+	os.RemoveAll("deb")
+
+	// "goarch" here is set to whatever the Debian packages expect. We correct
+	// "it to what we actually know how to build and keep the Debian variant
+	// "name in "debarch".
+	debarch := goarch
+	switch goarch {
+	case "i386":
+		goarch = "386"
+	case "armel", "armhf":
+		goarch = "arm"
+	}
+
+	build("./cmd/syncthing", []string{"noupgrade"})
+
+	files := []archiveFile{
+		{src: "README.md", dst: "deb/usr/share/doc/syncthing/README.txt", perm: 0644},
+		{src: "LICENSE", dst: "deb/usr/share/doc/syncthing/LICENSE.txt", perm: 0644},
+		{src: "AUTHORS", dst: "deb/usr/share/doc/syncthing/AUTHORS.txt", perm: 0644},
+		{src: "syncthing", dst: "deb/usr/bin/syncthing", perm: 0755},
+		{src: "man/syncthing.1", dst: "deb/usr/share/man/man1/syncthing.1", perm: 0644},
+		{src: "man/syncthing-config.5", dst: "deb/usr/share/man/man5/syncthing-config.5", perm: 0644},
+		{src: "man/syncthing-stignore.5", dst: "deb/usr/share/man/man5/syncthing-stignore.5", perm: 0644},
+		{src: "man/syncthing-device-ids.7", dst: "deb/usr/share/man/man7/syncthing-device-ids.7", perm: 0644},
+		{src: "man/syncthing-event-api.7", dst: "deb/usr/share/man/man7/syncthing-event-api.7", perm: 0644},
+		{src: "man/syncthing-faq.7", dst: "deb/usr/share/man/man7/syncthing-faq.7", perm: 0644},
+		{src: "man/syncthing-networking.7", dst: "deb/usr/share/man/man7/syncthing-networking.7", perm: 0644},
+		{src: "man/syncthing-rest-api.7", dst: "deb/usr/share/man/man7/syncthing-rest-api.7", perm: 0644},
+		{src: "man/syncthing-security.7", dst: "deb/usr/share/man/man7/syncthing-security.7", perm: 0644},
+		{src: "man/syncthing-versioning.7", dst: "deb/usr/share/man/man7/syncthing-versioning.7", perm: 0644},
+	}
+
+	for _, file := range listFiles("extra") {
+		files = append(files, archiveFile{src: file, dst: "deb/usr/share/doc/syncthing/" + filepath.Base(file), perm: 0644})
+	}
+
+	for _, af := range files {
+		if err := copyFile(af.src, af.dst, af.perm); err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	control := `Package: syncthing
+Architecture: {{arch}}
+Depends: libc6
+Version: {{version}}
+Maintainer: Syncthing Release Management <release@syncthing.net>
+Description: Open Source Continuous File Synchronization
+	Syncthing does bidirectional synchronization of files between two or
+	more computers.
+`
+	changelog := `syncthing ({{version}}); urgency=medium
+
+  * Packaging of {{version}}.
+
+ -- Jakob Borg <jakob@nym.se>  {{date}}
+`
+
+	control = strings.Replace(control, "{{arch}}", debarch, -1)
+	control = strings.Replace(control, "{{version}}", version[1:], -1)
+	changelog = strings.Replace(changelog, "{{arch}}", debarch, -1)
+	changelog = strings.Replace(changelog, "{{version}}", version[1:], -1)
+	changelog = strings.Replace(changelog, "{{date}}", time.Now().Format(time.RFC1123), -1)
+
+	os.MkdirAll("deb/DEBIAN", 0755)
+	ioutil.WriteFile("deb/DEBIAN/control", []byte(control), 0644)
+	ioutil.WriteFile("deb/DEBIAN/compat", []byte("9\n"), 0644)
+	ioutil.WriteFile("deb/DEBIAN/changelog", []byte(changelog), 0644)
+
+}
+
+func copyFile(src, dst string, perm os.FileMode) error {
+	dstDir := filepath.Dir(dst)
+	os.MkdirAll(dstDir, 0755) // ignore error
+	srcFd, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer srcFd.Close()
+	dstFd, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, perm)
+	if err != nil {
+		return err
+	}
+	defer dstFd.Close()
+	_, err = io.Copy(dstFd, srcFd)
+	return err
 }
 
 func listFiles(dir string) []string {
@@ -481,8 +581,9 @@ func runPipe(file, cmd string, args ...string) {
 }
 
 type archiveFile struct {
-	src string
-	dst string
+	src  string
+	dst  string
+	perm os.FileMode
 }
 
 func tarGz(out string, files []archiveFile) {
