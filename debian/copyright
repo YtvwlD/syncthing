@@ -11,6 +11,11 @@ Files: debian/*
 Copyright: 2015 Niklas Sombert <niklas@ytvwld.de>
 License: GPL-3
 
+Files: debian/syncthing*.? (man pages) (and README.md and refresh.sh)
+Copyright: 2015 Jakob Borg <jakob@nym.se>
+	and other contributors (see /usr/share/doc/syncthing/CONTRIBUTORS)
+License: MPL-2
+
 Files: Makefile
 Copyright: 2014 Niklas Sombert <niklas@ytvwld.de>
 License: GPL-3
