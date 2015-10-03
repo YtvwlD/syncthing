@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH "SYNCTHING" "1" "July 01, 2015" "v0.11" "Syncthing"
+.TH "SYNCTHING" "1" "September 10, 2015" "v0.11" "Syncthing"
 .SH NAME
 syncthing \- Syncthing
 .
@@ -38,9 +38,9 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .ft C
 syncthing [\-audit] [\-generate=<dir>] [\-gui\-address=<address>]
           [\-gui\-apikey=<key>] [\-gui\-authentication=<username:password>]
-          [\-home=<dir>] [\-logflags=<flags>] [\-no\-browser] [\-no\-restart]
-          [\-reset] [\-upgrade] [\-upgrade\-check] [\-upgrade\-to=<url>]
-          [\-verbose] [\-version]
+          [\-home=<dir>] [\-logfile=<filename>] [\-logflags=<flags>] [\-no\-browser]
+          [\-no\-console] [\-no\-restart] [\-reset] [\-upgrade] [\-upgrade\-check]
+          [\-upgrade\-to=<url>] [\-verbose] [\-version]
 .ft P
 .fi
 .UNINDENT
@@ -87,6 +87,11 @@ Set configuration directory. The default configuration directory is:
 .UNINDENT
 .INDENT 0.0
 .TP
+.B \-logfile=<filename>
+Set destination filename for logging (use \fB"\-"\fP for stdout, which is the default option).
+.UNINDENT
+.INDENT 0.0
+.TP
 .B \-logflags=<flags>
 Select information in log line prefix, default 2. The \fB\-logflags\fP value is
 a sum of the following:
@@ -111,6 +116,11 @@ show time only (2).
 .TP
 .B \-no\-browser
 Do not start a browser.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B \-no\-console
+Hide the console window. (On Windows only)
 .UNINDENT
 .INDENT 0.0
 .TP
