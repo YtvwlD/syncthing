@@ -1,3 +1,31 @@
+syncthing (0.11.25-4) trusty; urgency=low
+
+  * A build for trusty.
+  * Add the official Syncthing repo to the system.
+
+ -- Niklas Sombert <niklas@ytvwld.de>  Sat, 03 Jul 2015 16:09:05 +0200
+
+syncthing (0.11.25-3) utopic; urgency=low
+
+  * A build for utopic.
+  * Add the official Syncthing repo to the system.
+
+ -- Niklas Sombert <niklas@ytvwld.de>  Sat, 03 Jul 2015 16:07:19 +0200
+
+syncthing (0.11.25-2) vivid; urgency=low
+
+  * A build for vivid.
+  * Add the official Syncthing repo to the system.
+
+ -- Niklas Sombert <niklas@ytvwld.de>  Sat, 03 Jul 2015 16:05:11 +0200
+
+syncthing (0.11.25-1) wily; urgency=low
+
+  * Updated version to v0.11.25.
+  * Add the official Syncthing repo to the system.
+
+ -- Niklas Sombert <niklas@ytvwld.de>  Sat, 03 Oct 2015 14:15:57 +0200
+
 syncthing (0.11.13a-6) trusty; urgency=low
 
   * Retrying the build for trusty.
