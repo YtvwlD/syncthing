@@ -1,8 +1,8 @@
-syncthing (0.11.13a-6) trusty; urgency=low
+syncthing (0.11.13a-7) vivid; urgency=low
 
-  * Retrying the build for trusty.
+  * Add the official Syncthing repository to the system.
 
- -- Niklas Sombert <niklas@ytvwld.de>  Fri, 10 Jul 2015 20:11:57 +0200
+ -- Niklas Sombert <niklas@ytvwld.de>  Sun, 04 Oct 2015 18:31:31 +0200
 
 syncthing (0.11.13a-5) utopic; urgency=low
 
